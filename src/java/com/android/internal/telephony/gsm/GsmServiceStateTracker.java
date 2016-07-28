@@ -59,6 +59,7 @@ import android.util.TimeUtils;
 
 import com.android.internal.telephony.CommandException;
 import com.android.internal.telephony.CommandsInterface;
+import com.android.internal.telephony.ConfigResourceUtil;
 import com.android.internal.telephony.EventLogTags;
 import com.android.internal.telephony.ICarrierConfigLoader;
 import com.android.internal.telephony.MccTable;
@@ -91,20 +92,20 @@ import java.util.TimeZone;
 /**
  * {@hide}
  */
-final class GsmServiceStateTracker extends ServiceStateTracker {
+public class GsmServiceStateTracker extends ServiceStateTracker {
     static final String LOG_TAG = "GsmSST";
     static final boolean VDBG = false;
     //CAF_MSIM make it private ??
     private static final int EVENT_ALL_DATA_DISCONNECTED = 1001;
-    private GSMPhone mPhone;
-    GsmCellLocation mCellLoc;
-    GsmCellLocation mNewCellLoc;
+    protected GSMPhone mPhone;
+    protected GsmCellLocation mCellLoc;
+    protected GsmCellLocation mNewCellLoc;
     int mPreferredNetworkType;
 
     private int mMaxDataCalls = 1;
-    private int mNewMaxDataCalls = 1;
+    protected int mNewMaxDataCalls = 1;
     private int mReasonDataDenied = -1;
-    private int mNewReasonDataDenied = -1;
+    protected int mNewReasonDataDenied = -1;
 
     private static final String ACTION_MANAGED_ROAMING_IND =
             "codeaurora.intent.action.ACTION_MANAGED_ROAMING_IND";
@@ -119,12 +120,12 @@ final class GsmServiceStateTracker extends ServiceStateTracker {
      * Data roaming status solely based on TS 27.007 10.1.19 CGREG. Only used by
      * handlePollStateResult to store CGREG roaming result.
      */
-    private boolean mDataRoaming = false;
+    protected boolean mDataRoaming = false;
 
     /**
      * Mark when service state is in emergency call only mode
      */
-    private boolean mEmergencyOnly = false;
+    protected boolean mEmergencyOnly = false;
 
     /**
      * Sometimes we get the NITZ time before we know what country we
@@ -155,6 +156,8 @@ final class GsmServiceStateTracker extends ServiceStateTracker {
      * The Notification object given to the NotificationManager.
      */
     private Notification mNotification;
+
+    private ConfigResourceUtil mConfigResUtil = new ConfigResourceUtil();
 
     /** Wake lock used while setting time of day. */
     private PowerManager.WakeLock mWakeLock;
@@ -572,7 +575,7 @@ final class GsmServiceStateTracker extends ServiceStateTracker {
             mPhone.mCT.mForegroundCall.hangupIfAlive();
         }
 
-        mCi.setRadioPower(false, null);
+        mCi.setRadioPower(false, obtainMessage(EVENT_RADIO_POWER_OFF_DONE));
     }
 
     @Override
@@ -668,6 +671,11 @@ final class GsmServiceStateTracker extends ServiceStateTracker {
         }
         spn = maybeUpdateHDTagForSpn(showSpn, spn);
         plmn = maybeUpdateHDTagForPlmn(showPlmn, plmn);
+
+        if (mConfigResUtil.getBooleanValue(mPhone.getContext(), "config_spn_display_control")) {
+            // Control not to show SPN.
+            showSpn = false;
+        }
 
         // Update SPN_STRINGS_UPDATED_ACTION IFF any value changes
         if (mSubId != subId ||
@@ -829,14 +837,17 @@ final class GsmServiceStateTracker extends ServiceStateTracker {
                             regState = Integer.parseInt(states[0]);
 
                             // states[3] (if present) is the current radio technology
-                            if (states.length >= 4 && states[3] != null) {
+                            if (states.length >= 4 && states[3] != null &&
+                                    !"null".equals(states[3])) {
                                 type = Integer.parseInt(states[3]);
                             }
                             if ((states.length >= 5 ) &&
-                                    (regState == ServiceState.RIL_REG_STATE_DENIED)) {
+                                    (regState == ServiceState.RIL_REG_STATE_DENIED) &&
+                                    !"null".equals(states[4])) {
                                 mNewReasonDataDenied = Integer.parseInt(states[4]);
                             }
-                            if (states.length >= 6) {
+                            if (states.length >= 6 && states[5] != null &&
+                                    !"null".equals(states[5])) {
                                 mNewMaxDataCalls = Integer.parseInt(states[5]);
                             }
                         } catch (NumberFormatException ex) {
@@ -1073,7 +1084,7 @@ final class GsmServiceStateTracker extends ServiceStateTracker {
         }
     }
 
-    private void pollStateDone() {
+    protected void pollStateDone() {
         if (Build.IS_DEBUGGABLE && SystemProperties.getBoolean(PROP_FORCE_ROAMING, false)) {
             mNewSS.setVoiceRoaming(true);
             mNewSS.setDataRoaming(true);
@@ -1564,7 +1575,7 @@ final class GsmServiceStateTracker extends ServiceStateTracker {
     }
 
     /** code is registration state 0-5 from TS 27.007 7.2 */
-    private int regCodeToServiceState(int code) {
+    protected int regCodeToServiceState(int code) {
         switch (code) {
             case 0:
             case 2: // 2 is "searching"
@@ -1594,7 +1605,7 @@ final class GsmServiceStateTracker extends ServiceStateTracker {
      * code is registration state 0-5 from TS 27.007 7.2
      * returns true if registered roam, false otherwise
      */
-    private boolean regCodeIsRoaming (int code) {
+    protected boolean regCodeIsRoaming (int code) {
         return ServiceState.RIL_REG_STATE_ROAMING == code;
     }
 
@@ -1652,8 +1663,15 @@ final class GsmServiceStateTracker extends ServiceStateTracker {
      */
     private boolean isOperatorConsideredNonRoaming(ServiceState s) {
         String operatorNumeric = s.getOperatorNumeric();
-        String[] numericArray = mPhone.getContext().getResources().getStringArray(
+        String[] numericArray;
+        int subId = mPhone.getSubId();
+        if (subId >= 0) {
+            numericArray = SubscriptionManager.getResourcesForSubId(mPhone.getContext(),subId)
+                 .getStringArray(com.android.internal.R.array.config_operatorConsideredNonRoaming);
+        } else {
+            numericArray = mPhone.getContext().getResources().getStringArray(
                     com.android.internal.R.array.config_operatorConsideredNonRoaming);
+        }
 
         if (numericArray.length == 0 || operatorNumeric == null) {
             return false;
@@ -1669,8 +1687,16 @@ final class GsmServiceStateTracker extends ServiceStateTracker {
 
     private boolean isOperatorConsideredRoaming(ServiceState s) {
         String operatorNumeric = s.getOperatorNumeric();
-        String[] numericArray = mPhone.getContext().getResources().getStringArray(
+        String[] numericArray;
+        int subId = mPhone.getSubId();
+        if (subId >= 0) {
+            numericArray = SubscriptionManager.getResourcesForSubId(mPhone.getContext(),subId)
+                .getStringArray(
                     com.android.internal.R.array.config_sameNamedOperatorConsideredRoaming);
+        } else {
+            numericArray = mPhone.getContext().getResources().getStringArray(
+                    com.android.internal.R.array.config_sameNamedOperatorConsideredRoaming);
+        }
 
         if (numericArray.length == 0 || operatorNumeric == null) {
             return false;

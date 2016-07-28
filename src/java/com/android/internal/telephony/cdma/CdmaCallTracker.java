@@ -760,8 +760,13 @@ public final class CdmaCallTracker extends CallTracker {
         for (Iterator<Connection> it = mHandoverConnections.iterator();
                 it.hasNext();) {
             Connection hoConnection = it.next();
-            log("handlePollCalls - disconnect hoConn= " + hoConnection);
-            ((ImsPhoneConnection)hoConnection).onDisconnect(DisconnectCause.NOT_VALID);
+            log("handlePollCalls - disconnect hoConn= " + hoConnection +
+                    " hoConn.State= " + hoConnection.getState());
+            if (hoConnection.getState().isRinging()) {
+                ((ImsPhoneConnection)hoConnection).onDisconnect(DisconnectCause.INCOMING_MISSED);
+            } else {
+                ((ImsPhoneConnection)hoConnection).onDisconnect(DisconnectCause.NOT_VALID);
+            }
             it.remove();
         }
 
@@ -1017,6 +1022,12 @@ public final class CdmaCallTracker extends CallTracker {
 
         if (!mPhone.mIsTheCurrentActivePhone) {
             Rlog.w(LOG_TAG, "Ignoring events received on inactive CdmaPhone");
+            for (int i = 0; i < mConnections.length; i++) {
+                CdmaConnection conn = mConnections[i];
+                if ((conn != null) && (conn.mCause != DisconnectCause.NOT_DISCONNECTED)) {
+                    conn.onDisconnect(conn.mCause);
+                }
+            }
             return;
         }
         switch (msg.what) {

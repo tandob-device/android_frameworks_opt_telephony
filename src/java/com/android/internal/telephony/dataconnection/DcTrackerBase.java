@@ -97,7 +97,7 @@ public abstract class DcTrackerBase extends Handler {
 
     /** Delay between APN attempts.
         Note the property override mechanism is there just for testing purpose only. */
-    protected static final int APN_DELAY_DEFAULT_MILLIS = 20000;
+    protected static final int APN_DELAY_DEFAULT_MILLIS = 3000;
 
     /** Delay between APN attempts when in fail fast mode */
     protected static final int APN_FAIL_FAST_DELAY_DEFAULT_MILLIS = 3000;
@@ -835,7 +835,9 @@ public abstract class DcTrackerBase extends Handler {
     public void setDataEnabled(boolean enable) {
         Message msg = obtainMessage(DctConstants.CMD_SET_USER_DATA_ENABLE);
         msg.arg1 = enable ? 1 : 0;
-        if (DBG) log("setDataEnabled: sendMessage: enable=" + enable);
+        msg.arg2 = mPhone.getSubId();
+        if (DBG) log("setDataEnabled: sendMessage: enable=" + enable +
+                ", subId=" + mPhone.getSubId());
         sendMessage(msg);
     }
 
@@ -986,8 +988,9 @@ public abstract class DcTrackerBase extends Handler {
             }
             case DctConstants.CMD_SET_USER_DATA_ENABLE: {
                 final boolean enabled = (msg.arg1 == DctConstants.ENABLED) ? true : false;
-                if (DBG) log("CMD_SET_USER_DATA_ENABLE enabled=" + enabled);
-                onSetUserDataEnabled(enabled);
+                final int subId = msg.arg2;
+                if (DBG) log("CMD_SET_USER_DATA_ENABLE enabled=" + enabled + ", subId=" + subId);
+                onSetUserDataEnabled(enabled, subId);
                 break;
             }
             case DctConstants.CMD_SET_DEPENDENCY_MET: {
@@ -1377,18 +1380,21 @@ public abstract class DcTrackerBase extends Handler {
     public abstract boolean isDisconnected();
 
     protected void onSetUserDataEnabled(boolean enabled) {
+        onSetUserDataEnabled(enabled, mPhone.getSubId());
+    }
+
+    protected void onSetUserDataEnabled(boolean enabled, int subId) {
         synchronized (mDataEnabledLock) {
+            // For single SIM phones, this is a per phone property.
+            if (TelephonyManager.getDefault().getSimCount() == 1) {
+                Settings.Global.putInt(mResolver, Settings.Global.MOBILE_DATA, enabled ? 1 : 0);
+            } else {
+                Settings.Global.putInt(mResolver, Settings.Global.MOBILE_DATA + subId,
+                        enabled ? 1 : 0);
+            }
+
             if (mUserDataEnabled != enabled) {
                 mUserDataEnabled = enabled;
-
-                // For single SIM phones, this is a per phone property.
-                if (TelephonyManager.getDefault().getSimCount() == 1) {
-                    Settings.Global.putInt(mResolver, Settings.Global.MOBILE_DATA, enabled ? 1 : 0);
-                } else {
-                    int phoneSubId = mPhone.getSubId();
-                    Settings.Global.putInt(mResolver, Settings.Global.MOBILE_DATA + phoneSubId,
-                            enabled ? 1 : 0);
-                }
                 if (getDataOnRoamingEnabled() == false &&
                         mPhone.getServiceState().getDataRoaming() == true) {
                     if (enabled) {
